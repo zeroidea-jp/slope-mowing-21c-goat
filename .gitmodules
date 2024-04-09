@@ -1,0 +1,6 @@
+[submodule "BLHeli_32_ESC_Driver"]
+	path = BLHeli_32_ESC_Driver
+	url = git@github.com:zeroidea-jp/BLHeli_32_ESC_Driver.git
+[submodule "rmd-motor-id-setup"]
+	path = rmd-motor-id-setup
+	url = git@github.com:zeroidea-jp/rmd-motor-id-setup.git
