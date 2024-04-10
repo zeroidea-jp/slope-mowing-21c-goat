@@ -120,34 +120,39 @@ func logFrame(frame can.Frame) {
 		}
 		defer file.Close()
 
+		// 電流の計算
+		torque_current_in_A := float32(int16(frame.Data[2])|(int16(frame.Data[3])<<8)) / 100      // "100" comes from 0.01A/LSB
+		shaft_speed_in_rev_p_sec := float32(int16(frame.Data[4])|(int16(frame.Data[5])<<8)) / 360 // 1dps/LSB
+		shaft_position_in_rev := float32(int16(frame.Data[6])|(int16(frame.Data[7])<<8)) / 360    // 1dps/LSB
 		// フレームの情報をログファイルに書き込む
 		log.SetOutput(file)
-		log.Printf("ID: %X, Data: %X\n", frame.ID, frame.Data)
+		log.Printf("ID: %X, Data: %X, Celsius: %d, A: %+.2f, rev/s: %+.3f,  rev: %+.3f\n", frame.ID, frame.Data, frame.Data[1], torque_current_in_A, shaft_speed_in_rev_p_sec, shaft_position_in_rev)
 	} else {
 		fmt.Printf("ID: %X, Data: %X\n", frame.ID, frame.Data)
 	}
 }
 
 func ask_status_at_interval(ctx context.Context, pTx *socketcan.Transmitter, motor_ids []MotorID, s_data []can.Data, pWg *sync.WaitGroup) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("Shutting down...")
+			pWg.Done()
 			return
 		case <-ticker.C:
 			send_command_to_each_motors(ctx, pTx, motor_ids, s_data)
 			err := send_command_to_each_motors(ctx, pTx, motor_ids, s_data)
 			if err != nil {
 				log.Println("error when sending read_status command")
+				pWg.Done()
 				log.Fatal(err)
 			}
 
 		}
 	}
-	pWg.Done()
 }
 
 type current_in_deci_A_int16 int16
@@ -251,21 +256,21 @@ func main() {
 	wg.Add(1)
 	go ask_status_at_interval(ctx, pTx, motor_ids, s_read_status_data_2, &wg)
 
-	data_to_read_multi_turn_encoder_position_data := can.Data{0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	// data_to_read_multi_turn_encoder_position_data := can.Data{0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
-	s_data_to_read_multi_turn_motor_position := []can.Data{
-		data_to_read_multi_turn_encoder_position_data,
-		data_to_read_multi_turn_encoder_position_data,
-	}
+	// s_data_to_read_multi_turn_motor_position := []can.Data{
+	// 	data_to_read_multi_turn_encoder_position_data,
+	// 	data_to_read_multi_turn_encoder_position_data,
+	// }
 
-	shaft_angle_speed := shaft_angle_speed_in_deg_per_sec_int16(180)
-	a_speed := shaft_angle_speed.to_can_data_alley()
+	// shaft_angle_speed := shaft_angle_speed_in_deg_per_sec_int16(180)
+	// a_speed := shaft_angle_speed.to_can_data_alley()
 
 	delta_deci_degree := angle_in_deci_degree_int32(0 * 100)
 	a_delt_c_deg := delta_deci_degree.to_can_data_alley()
 	log.Println(a_delt_c_deg)
 
-	data_to_control_absolute_position_in_closed_loop_0 := can.Data{0xA4, 0x00, a_speed[0], a_speed[1], a_delt_c_deg[0], a_delt_c_deg[1], a_delt_c_deg[2], a_delt_c_deg[3]} // works
+	// data_to_control_absolute_position_in_closed_loop_0 := can.Data{0xA4, 0x00, a_speed[0], a_speed[1], a_delt_c_deg[0], a_delt_c_deg[1], a_delt_c_deg[2], a_delt_c_deg[3]} // works
 
 	// s_data_to_control_absolute_position_in_closed_loop_0 := []can.Data{
 	// 	data_to_control_absolute_position_in_closed_loop_0,
@@ -275,9 +280,9 @@ func main() {
 	delta_deci_degree = angle_in_deci_degree_int32(-360 * 100)
 	a_delt_c_deg = delta_deci_degree.to_can_data_alley()
 	log.Println(a_delt_c_deg)
-	data_to_control_absolute_position_in_closed_loop_360 := can.Data{0xA4, 0x00, a_speed[0], a_speed[1], a_delt_c_deg[0], a_delt_c_deg[1], a_delt_c_deg[2], a_delt_c_deg[3]} // works
+	// data_to_control_absolute_position_in_closed_loop_360 := can.Data{0xA4, 0x00, a_speed[0], a_speed[1], a_delt_c_deg[0], a_delt_c_deg[1], a_delt_c_deg[2], a_delt_c_deg[3]} // works
 
-	deci_A_cw := current_in_deci_A_int16(3)
+	deci_A_cw := current_in_deci_A_int16(-12)
 	a_deci_A_cw := deci_A_cw.to_can_data_alley()
 	// deci_A_ccw := current_in_deci_A_int16(-12)
 	// a_deci_A_ccw := deci_A_ccw.to_can_data_alley()
@@ -285,46 +290,53 @@ func main() {
 	data_to_torque_closed_loop_control_cw := can.Data{0xA1, 0x00, 0x00, 0x00, a_deci_A_cw[0], a_deci_A_cw[1], 0x00, 0x00}
 	// data_to_torque_closed_loop_control_ccw := can.Data{0xA1, 0x00, 0x00, 0x00, a_deci_A_ccw[0], a_deci_A_ccw[1], 0x00, 0x00}
 
-	s_data_to_position_cw_and_torque_cw_init := []can.Data{
-		data_to_control_absolute_position_in_closed_loop_0,
-		data_to_torque_closed_loop_control_cw,
-	}
+	// s_data_to_position_cw_and_torque_cw_init := []can.Data{
+	// 	data_to_control_absolute_position_in_closed_loop_0,
+	// 	data_to_torque_closed_loop_control_cw,
+	// }
 
-	s_data_to_position_cw_and_torque_cw := []can.Data{
-		data_to_control_absolute_position_in_closed_loop_360,
-		data_to_torque_closed_loop_control_cw,
-	}
+	// s_data_to_position_cw_and_torque_cw := []can.Data{
+	// 	data_to_control_absolute_position_in_closed_loop_360,
+	// 	data_to_torque_closed_loop_control_cw,
+	// }
 
-	s_data_to_torque_cw_and_position_cw := []can.Data{
-		data_to_torque_closed_loop_control_cw,
-		data_to_control_absolute_position_in_closed_loop_360,
-	}
+	// s_data_to_torque_cw_and_position_cw := []can.Data{
+	// 	data_to_torque_closed_loop_control_cw,
+	// 	data_to_control_absolute_position_in_closed_loop_360,
+	// }
 
-	// data_to_shutdown_motor := can.Data{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	data_to_shutdown_motor := can.Data{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
 	// s_data_to_torque_closed_loop_control := []can.Data{
 	// 	data_to_torque_closed_loop_control_cw,
 	// 	data_to_torque_closed_loop_control_ccw,
 	// }
 
-	// s_data_to_shutdown_motor := []can.Data{
-	// 	data_to_shutdown_motor,
-	// 	data_to_shutdown_motor,
-	// }
+	s_data_to_shutdown_motor := []can.Data{
+		data_to_shutdown_motor,
+		data_to_shutdown_motor,
+	}
 
 	// s_data_to_control_absolute_position_in_closed_loop_360 := []can.Data{
 	// 	data_to_control_absolute_position_in_closed_loop_360,
 	// 	data_to_control_absolute_position_in_closed_loop_360,
 	// }
 
+	s_data_to_torque_control_for_code_test_only := []can.Data{
+		data_to_torque_closed_loop_control_cw,
+		data_to_torque_closed_loop_control_cw,
+	}
+
 	slice_of_sequance := [][]can.Data{
-		s_data_to_read_multi_turn_motor_position,
-		s_data_to_position_cw_and_torque_cw_init,
-		s_data_to_position_cw_and_torque_cw,
-		s_data_to_torque_cw_and_position_cw,
+		// s_data_to_shutdown_motor,
+		// s_data_to_read_multi_turn_motor_position,
+		// s_data_to_position_cw_and_torque_cw_init,
+		// s_data_to_position_cw_and_torque_cw,
+		// s_data_to_torque_cw_and_position_cw,
 		// s_data_to_control_absolute_position_in_closed_loop_0,
 		// s_data_to_control_absolute_position_in_closed_loop_360,
-		// s_data_to_shutdown_motor,
+		s_data_to_torque_control_for_code_test_only,
+		s_data_to_shutdown_motor,
 	}
 
 	// data := can.Data{0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
@@ -336,11 +348,11 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Println("Waiting for a second ...")
-		time.Sleep(3 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 
 	log.Println("wating 1 sec before exiting main() to confirm othe processes will finish properly")
-	time.Sleep(time.Second)
+	time.Sleep(3 * time.Second)
 	log.Println("Exiting main()")
 
 	// fmt.Printf("Get message: %v\n", msg)
