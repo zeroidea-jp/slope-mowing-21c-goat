@@ -40,6 +40,7 @@ type Model string
 func main() {
 	// 制御する全てのモーターの ID を Slice に格納
 	// motor_ids := []MotorID{MOTOR_ID_1, MOTOR_ID_2}
+	motor_id := MOTOR_ID_1
 
 	// Context を作成
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -70,25 +71,26 @@ func main() {
 	pRx := socketcan.NewReceiver(pConn)
 	defer pRx.Close()
 
-	// target_position_in_rot := shaft_position_in_rotation(0) // WORKKING POINT
-	// max_speed_in_rps := shaft_speed_in_rot_per_sec(3)
+	time.Sleep(2 * time.Second)
+	target_position_in_rot := shaft_position_in_rotation(0) // WORKKING POINT
+	max_speed_in_rps := shaft_speed_in_rot_per_sec(4.5)
 
-	// _ = send_absolute_postion_control_command(ctx, pTx, pRx, MOTOR_ID_2, target_position_in_rot, max_speed_in_rps)
-	// _ = wait_for_position_reached(ctx, pTx, pRx, MOTOR_ID_2, target_position_in_rot)
+	_ = send_absolute_postion_control_command(ctx, pTx, pRx, motor_id, target_position_in_rot, max_speed_in_rps)
+	_ = wait_for_position_reached(ctx, pTx, pRx, motor_id, target_position_in_rot)
 
-	// time.Sleep(2 * time.Second)
-
-	max_current_in_A := current_in_A(0.06)
-
-	_ = send_torque_control_command(ctx, pTx, pRx, MOTOR_ID_2, max_current_in_A)
-
-	_ = dangerous_wait_for_shaft_stops(ctx, pTx, pRx, MOTOR_ID_2)
-
+	time.Sleep(5 * time.Second)
+	//
+	//max_current_in_A := current_in_A(0.5)
+	//
+	//_ = send_torque_control_command(ctx, pTx, pRx, motor_id, max_current_in_A)
+	//
+	//_ = dangerous_wait_for_shaft_stops(ctx, pTx, pRx, motor_id)
+	//
 	// time.Sleep(20 * time.Second)
 
 	// max_current_in_A = current_in_A(0)
 
-	// _ = send_torque_control_command(ctx, pTx, pRx, MOTOR_ID_2, max_current_in_A)
+	// _ = send_torque_control_command(ctx, pTx, pRx, motor_id, max_current_in_A)
 
 	log.Println("Exiting main()")
 

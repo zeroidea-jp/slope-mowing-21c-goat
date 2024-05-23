@@ -46,8 +46,9 @@ def main():
     print("setting esc duty to its min Value.")
     set_esc_duty(ESC_MIN_DUTY)
     print("Waiting for a second.")
+    time.sleep(2)  # Maintain the motor speed
 
-    target_duty = 0.8 *  ESC_MAX_DUTY  # Adjust this value to set the desired motor speed
+    target_duty = 0.9 *  ESC_MAX_DUTY  # Adjust this value to set the desired motor speed
 
     print("Accelerating motor...")
     set_esc_duty(target_duty)
