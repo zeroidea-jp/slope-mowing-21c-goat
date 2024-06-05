@@ -1,0 +1,11 @@
+/home/no-rules/dev_zeroidea/slope-mowing/slope-mowing-21c-goat/init-with-rust/target/debug/deps/libsocketcan-97ae36639d0649c5.rmeta: /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/lib.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/errors.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/frame.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/dump.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/socket.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/nl/mod.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/nl/rt.rs
+
+/home/no-rules/dev_zeroidea/slope-mowing/slope-mowing-21c-goat/init-with-rust/target/debug/deps/socketcan-97ae36639d0649c5.d: /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/lib.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/errors.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/frame.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/dump.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/socket.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/nl/mod.rs /home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/nl/rt.rs
+
+/home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/lib.rs:
+/home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/errors.rs:
+/home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/frame.rs:
+/home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/dump.rs:
+/home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/socket.rs:
+/home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/nl/mod.rs:
+/home/no-rules/.cargo/registry/src/index.crates.io-6f17d22bba15001f/socketcan-3.3.0/src/nl/rt.rs:

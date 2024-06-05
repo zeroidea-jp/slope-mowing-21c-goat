@@ -1,0 +1,87 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net"
+	"sync"
+	"time"
+
+	"go.einride.tech/can"
+	"go.einride.tech/can/pkg/socketcan"
+)
+
+func send_command_to_each_motors(ctx context.Context, pTx *socketcan.Transmitter, motor_ids []MotorID, s_data []can.Data) error {
+	for i, motor_id := range motor_ids {
+
+		err := send_command(ctx, pTx, motor_id, s_data[i], FLAG_SINGLE_MOTOR)
+		if err != nil {
+			log.Println("error when sending command")
+			log.Println(err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func receive_reply(ctx context.Context, pConn net.Conn, pWg *sync.WaitGroup) {
+	pRecv := socketcan.NewReceiver(pConn)
+	defer pRecv.Close()
+LOOP:
+	for pRecv.Receive() {
+		frame := pRecv.Frame()
+		fmt.Println(frame.String())
+		select {
+		case <-ctx.Done():
+			log.Println("ctx.Done() proceeded.")
+			break LOOP
+		default:
+		}
+	}
+	pWg.Done()
+}
+
+func recieve_reply_and_save_status_logs(ctx context.Context, pConn net.Conn, pWg *sync.WaitGroup) {
+	pRecv := socketcan.NewReceiver(pConn)
+	defer pRecv.Close()
+
+	// ログ開始時のタイムスタンプを取得
+	startTime := time.Now().Format("20060102150405")
+LOOP:
+	for pRecv.Receive() {
+		frame := pRecv.Frame()
+		logFrame(frame, startTime)
+		select {
+		case <-ctx.Done():
+			log.Println("ctx.Done() proceeded.")
+			break LOOP
+		default:
+		}
+	}
+	pWg.Done()
+}
+
+func ask_status_at_interval(ctx context.Context, pTx *socketcan.Transmitter, motor_ids []MotorID, s_data []can.Data, pWg *sync.WaitGroup) {
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Shutting down...")
+			pWg.Done()
+			return
+		case <-ticker.C:
+			send_command_to_each_motors(ctx, pTx, motor_ids, s_data)
+			err := send_command_to_each_motors(ctx, pTx, motor_ids, s_data)
+			if err != nil {
+				log.Println("error when sending read_status command")
+				pWg.Done()
+				log.Fatal(err)
+			}
+
+		}
+	}
+}

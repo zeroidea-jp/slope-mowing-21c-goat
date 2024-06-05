@@ -20,3 +20,7 @@
 # Go workspace file
 go.work
 memo.go
+
+# Added by cargo
+
+/target
