@@ -6,13 +6,16 @@ import (
 	"log"
 	"net"
 	"sync"
-	"time"
+//	"time"
+
+	"os"
+	"strconv"
 
 	"go.einride.tech/can"
 	"go.einride.tech/can/pkg/socketcan"
 )
 
-const MOTOR_ID_1 = MotorID(0x01)
+const MOTOR_ID_1 = MotorID(0x04)
 
 const FLAG_SINGLE_MOTOR MotorTargetFlag = 0x140
 
@@ -137,7 +140,12 @@ func int32_to_uint8_alley(int32_num int32) [4]uint8 {
 // }
 
 func main() {
-	motor_ids := []MotorID{MOTOR_ID_1}
+	args := os.Args
+	id, _ := strconv.Atoi(args[1])
+	pos, _ := strconv.Atoi(args[2])
+
+
+	motor_ids := []MotorID{MotorID(id)}
 
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
@@ -158,10 +166,10 @@ func main() {
 	wg.Add(1)
 	go receive_reply(ctx, pConn, &wg)
 
-	shaft_angle_speed := shaft_angle_speed_in_deg_per_sec_int16(180)
+	shaft_angle_speed := shaft_angle_speed_in_deg_per_sec_int16(1000)
 	a_speed := shaft_angle_speed.to_can_data_alley()
 
-	delta_deci_degree := angle_in_deci_degree_int32(0 * 100)
+	delta_deci_degree := angle_in_deci_degree_int32(pos * 100)
 	a_delt_c_deg := delta_deci_degree.to_can_data_alley()
 	log.Println(a_delt_c_deg)
 
@@ -172,7 +180,7 @@ func main() {
 	// 	data_to_control_absolute_position_in_closed_loop_0,
 	// }
 
-	delta_deci_degree = angle_in_deci_degree_int32(-36000 * 100)
+	delta_deci_degree = angle_in_deci_degree_int32(pos * 100)
 	a_delt_c_deg = delta_deci_degree.to_can_data_alley()
 	log.Println(a_delt_c_deg)
 	data_to_control_absolute_position_in_closed_loop_any := can.Data{0xA4, 0x00, a_speed[0], a_speed[1], a_delt_c_deg[0], a_delt_c_deg[1], a_delt_c_deg[2], a_delt_c_deg[3]} // works
@@ -207,13 +215,13 @@ func main() {
 			log.Println("error when sending command_to_each_motors...sequence:", i)
 			log.Fatal(err)
 		}
-		log.Println("Waiting for a second ...")
-		time.Sleep(5 * time.Second)
+		// log.Println("Waiting for a second ...")
+		// time.Sleep(5 * time.Second)
 	}
 
-	log.Println("wating 1 sec before exiting main() to confirm othe processes will finish properly")
-	time.Sleep(time.Second)
-	log.Println("Exiting main()")
+	// log.Println("wating 1 sec before exiting main() to confirm othe processes will finish properly")
+	// time.Sleep(time.Second)
+	// log.Println("Exiting main()")
 
 	// fmt.Printf("Get message: %v\n", msg)
 }

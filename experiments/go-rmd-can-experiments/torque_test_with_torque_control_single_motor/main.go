@@ -12,7 +12,7 @@ import (
 	"go.einride.tech/can/pkg/socketcan"
 )
 
-const MOTOR_ID_1 = MotorID(0x01)
+const MOTOR_ID_1 = MotorID(0x02)
 
 const FLAG_SINGLE_MOTOR MotorTargetFlag = 0x140
 
@@ -164,7 +164,7 @@ func main() {
 
 	// deci_A_cw := current_in_deci_A_int16(3)
 	// a_deci_A_cw := deci_A_cw.to_can_data_alley()
-	deci_A_ccw := current_in_deci_A_int16(-100)
+	deci_A_ccw := current_in_deci_A_int16(-500)
 	a_deci_A_ccw := deci_A_ccw.to_can_data_alley()
 
 	// data_to_torque_closed_loop_control_cw := can.Data{0xA1, 0x00, 0x00, 0x00, a_deci_A_cw[0], a_deci_A_cw[1], 0x00, 0x00}

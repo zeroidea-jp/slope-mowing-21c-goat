@@ -4,18 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"os"
-	"os/signal"
-	"sync"
-	"syscall"
 	"time"
 
 	"go.einride.tech/can"
 	"go.einride.tech/can/pkg/socketcan"
 )
 
-const MOTOR_ID_1 = MotorID(0x01)
+const MOTOR_ID_1 = MotorID(0x03)
 const MOTOR_ID_2 = MotorID(0x02)
 
 const FLAG_SINGLE_MOTOR MotorTargetFlag = 0x140
@@ -26,8 +22,8 @@ const FLAG_SINGLE_MOTOR MotorTargetFlag = 0x140
 
 type MotorTargetFlag uint32
 
-type MotorModelParameters struct {
-}
+// type MotorModelParameters struct {
+// }
 
 type MotorID uint8
 type Model string
@@ -35,88 +31,342 @@ type Model string
 // type MotorModels map[Model]struct {
 // }
 
-type Orders map[MotorID]*OrderData
+// type Orders map[MotorID]*OrderData
 
-type OrderData struct {
-	canFrame can.Frame
+// type OrderData struct {
+// 	canFrame can.Frame
+// }
+
+func main() {
+	// 制御する全てのモーターの ID を Slice に格納
+	// motor_ids := []MotorID{MOTOR_ID_1, MOTOR_ID_2}
+
+	// Context を作成
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
+	// // シグナルを受信するチャンネルを作成
+	// sigCh := make(chan os.Signal, 1)
+	// signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// go func() {
+	// 	<-sigCh
+	// 	cancel()
+	// }()
+
+	// CAN 通信のインターフェースを開く
+	pConn, err := socketcan.DialContext(ctx, "can", "can0")
+	if err != nil {
+		log.Println("Error when Dialialing with Context.")
+		log.Fatal(err)
+	}
+	defer pConn.Close()
+
+	// CAN 用の io.Writer の作成
+	pTx := socketcan.NewTransmitter(pConn)
+	defer pTx.Close()
+
+	// CAN 用の io.Receiver にの作成
+	pRx := socketcan.NewReceiver(pConn)
+	defer pRx.Close()
+
+	// target_position_in_rot := shaft_position_in_rotation(0) // WORKKING POINT
+	// max_speed_in_rps := shaft_speed_in_rot_per_sec(3)
+
+	// _ = send_absolute_postion_control_command(ctx, pTx, pRx, MOTOR_ID_2, target_position_in_rot, max_speed_in_rps)
+	// _ = wait_for_position_reached(ctx, pTx, pRx, MOTOR_ID_2, target_position_in_rot)
+
+	// time.Sleep(2 * time.Second)
+
+	max_current_in_A := current_in_A(0.06)
+
+	_ = send_torque_control_command(ctx, pTx, pRx, MOTOR_ID_2, max_current_in_A)
+
+	_ = dangerous_wait_for_shaft_stops(ctx, pTx, pRx, MOTOR_ID_2)
+
+	// time.Sleep(20 * time.Second)
+
+	// max_current_in_A = current_in_A(0)
+
+	// _ = send_torque_control_command(ctx, pTx, pRx, MOTOR_ID_2, max_current_in_A)
+
+	log.Println("Exiting main()")
+
+	// fmt.Printf("Get message: %v\n", msg)
 }
 
-func send_command_to_each_motors(ctx context.Context, pTx *socketcan.Transmitter, motor_ids []MotorID, s_data []can.Data) error {
-	for i, motor_id := range motor_ids {
+//
+//
+//
 
-		err := send_command(ctx, pTx, motor_id, s_data[i], FLAG_SINGLE_MOTOR)
-		if err != nil {
-			log.Println("error when sending command")
-			log.Println(err)
-			return err
-		}
+type shaft_position_in_rotation float32
+type shaft_speed_in_rot_per_sec float32
+
+type current_in_A float32
+
+const ERROR_TOLERANCE_IN_DEGREE = int16(1)
+const PRESSING_TOLERANCE_IN_DEGREE = int16(5)
+const PRESSING_DURATION_IN_MILLI_S = time.Millisecond * 700
+
+func send_absolute_postion_control_command(ctx context.Context, pTx *socketcan.Transmitter, pRx *socketcan.Receiver, motor_id MotorID, target_position_in_rot shaft_position_in_rotation, max_speed_in_rps shaft_speed_in_rot_per_sec) error {
+	speed_alley := max_speed_in_rps.to_deg_per_sec_alley_2x_uint8()        // 1dps/LSB
+	position_allay := target_position_in_rot.to_centi_deg_alley_4x_uint8() // 0.01degree/LSB
+	log.Println("target_position_in_rot: ", target_position_in_rot)        // DEBUG
+	sendingData := can.Data{
+		0xA4,              // Command byte
+		0x00,              // NULL
+		speed_alley[0],    // Speed limit low byte // 1dps/LSB
+		speed_alley[1],    // Speed limit low byte
+		position_allay[0], // Position control lowest  byte // 0.01degree/LSB
+		position_allay[1], // Position control lower   byte
+		position_allay[2], // Position control higher  byte
+		position_allay[3], // Position control highest byte
+	}
+
+	err := send_command(ctx, pTx, motor_id, sendingData, FLAG_SINGLE_MOTOR)
+	if err != nil {
+		log.Fatal("failed to send position controle command: %", err)
+	}
+
+	err = receive_and_check_reply(pRx, motor_id, sendingData)
+	if err != nil {
+		log.Fatal("failed to receive proper responce: ", err)
 	}
 
 	return nil
 }
 
-func send_command(ctx context.Context, pTx *socketcan.Transmitter, motor_id MotorID, data can.Data, flag MotorTargetFlag) error {
-	data_frame := can.Frame{
-		ID:         uint32(motor_id) | uint32(flag),
-		Length:     8,
-		Data:       data,
-		IsRemote:   false,
-		IsExtended: false,
+func (shaft_position_in_rotation shaft_position_in_rotation) to_centi_deg_alley_4x_uint8() [4]uint8 {
+	degree := int32(shaft_position_in_rotation * 36000)
+	return (int32_to_alley_4x_uint8(degree))
+}
+
+func (shaft_position_in_rotation shaft_position_in_rotation) to_deg_alley_2x_uint8() [2]uint8 {
+	degree := shaft_position_in_rotation.to_degree()
+	return (int16_to_alley_2x_uint8(degree))
+}
+
+func (shaft_position_in_rotation shaft_position_in_rotation) to_degree() int16 {
+	shaft_position_in_degree := int16(shaft_position_in_rotation * 360)
+	return shaft_position_in_degree
+}
+
+func (shaft_speed_in_rot_per_sec shaft_speed_in_rot_per_sec) to_deg_per_sec_alley_2x_uint8() [2]uint8 {
+	degree_per_sec := int16(shaft_speed_in_rot_per_sec * 360)
+	return (int16_to_alley_2x_uint8(degree_per_sec))
+}
+
+func send_torque_control_command(ctx context.Context, pTx *socketcan.Transmitter, pRx *socketcan.Receiver, motor_id MotorID, max_current_in_A current_in_A) error {
+	current_alley := max_current_in_A.to_centiA_alley_2x_uint8()
+	sendingData := can.Data{
+		0xA1,             // Command byte
+		0x00,             // NULL
+		0x00,             // NULL
+		0x00,             // NULL
+		current_alley[0], // Torque control low  byte // 0.01A/LSB
+		current_alley[1], // Torque control high byte
+		0x00,             // NULL
+		0x00,             // NULL
 	}
 
-	err := pTx.TransmitFrame(ctx, data_frame)
+	err := send_command(ctx, pTx, motor_id, sendingData, FLAG_SINGLE_MOTOR)
 	if err != nil {
-		log.Println("Error when transmitting Frame (1)")
+		log.Fatal("failed to send position controle command: %v", err)
 	}
-	return err
 
+	err = receive_and_check_reply(pRx, motor_id, sendingData)
+	if err != nil {
+		log.Fatal("failed to receive proper responce: %v", err)
+	}
+
+	return nil
 }
 
-func receive_reply(ctx context.Context, pConn net.Conn, pWg *sync.WaitGroup) {
-	pRecv := socketcan.NewReceiver(pConn)
-	defer pRecv.Close()
-LOOP:
-	for pRecv.Receive() {
-		frame := pRecv.Frame()
-		fmt.Println(frame.String())
-		select {
-		case <-ctx.Done():
-			log.Println("ctx.Done() proceeded.")
-			break LOOP
-		default:
+func (current_in_A current_in_A) to_centiA_alley_2x_uint8() [2]uint8 {
+	current_in_centiA := int16(current_in_A * 100)
+	return (int16_to_alley_2x_uint8(current_in_centiA))
+}
+
+func int16_to_alley_2x_uint8(int16_num int16) [2]uint8 {
+	return [2]uint8{
+		uint8(int16_num & 0xFF),
+		uint8(int16_num >> 8 & 0xFF),
+	}
+}
+
+func int32_to_alley_4x_uint8(int32_num int32) [4]uint8 {
+	return [4]uint8{
+		uint8(int32_num & 0xFF),
+		uint8(int32_num >> 8 & 0xFF),
+		uint8(int32_num >> 16 & 0xFF),
+		uint8(int32_num >> 24 & 0xFF),
+	}
+}
+
+func dangerous_wait_for_shaft_stops(ctx context.Context, pTx *socketcan.Transmitter, pRx *socketcan.Receiver, motor_id MotorID) error {
+
+	sendingData := can.Data{
+		0x9C, // Command byte: Read Motor Status 2 Command(current, speed, position)
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+	}
+
+	var previous_position_in_degree int16 = 0 // CAUTION!! Possible to cause problem
+	var unchanged_duration time.Duration
+
+	timer := time.NewTimer(PRESSING_DURATION_IN_MILLI_S)
+	defer timer.Stop()
+
+	for {
+		interval := 100 * time.Millisecond
+		time.Sleep(interval)
+
+		err := send_command(ctx, pTx, motor_id, sendingData, FLAG_SINGLE_MOTOR)
+		if err != nil {
+			log.Fatal("failed to send position controle command: ", err)
 		}
-	}
-	pWg.Done()
-}
 
-func recieve_reply_and_save_status_logs(ctx context.Context, pConn net.Conn, pWg *sync.WaitGroup) {
-	pRecv := socketcan.NewReceiver(pConn)
-	defer pRecv.Close()
+		if pRx.Receive() { // Should be updated so that no reply can be treated
 
-LOOP:
-	for pRecv.Receive() {
-		frame := pRecv.Frame()
-		logFrame(frame)
-		select {
-		case <-ctx.Done():
-			log.Println("ctx.Done() proceeded.")
-			break LOOP
-		default:
+			respFrame := pRx.Frame()
+
+			if respFrame.ID != (0x240+uint32(motor_id)) || respFrame.Data[0] != sendingData[0] {
+				return fmt.Errorf("unexpected response received")
+			}
+
+			// モーターの現在位置を取得
+			current_position_in_degree := uint8_x2_to_int16(respFrame.Data[6], respFrame.Data[7])
+
+			if current_position_in_degree >= previous_position_in_degree-PRESSING_TOLERANCE_IN_DEGREE &&
+				current_position_in_degree <= previous_position_in_degree+PRESSING_TOLERANCE_IN_DEGREE {
+				unchanged_duration += interval
+			} else {
+				unchanged_duration = 0
+			}
+			previous_position_in_degree = current_position_in_degree
+
+			if unchanged_duration >= PRESSING_DURATION_IN_MILLI_S {
+				err = send_torque_control_command(ctx, pTx, pRx, motor_id, current_in_A(0))
+				if err != nil {
+					return fmt.Errorf("failed to send motor stop (set torque 0) command: %v", err)
+				}
+				log.Printf("Motor %d stopped due to unchanged speed", motor_id)
+				return nil
+			}
+
+			// log.Printf("Motor %d current position: %d", motor_id, current_position_in_degree)
+
+			// leave logs
+			err = log_motion(respFrame)
+			if err != nil {
+				log.Println("Error when loging motion: ", err)
+			}
 		}
+
 	}
-	pWg.Done()
+
 }
 
-func logFrame(frame can.Frame) {
-	// フレームのData[0]が0x9A, 0x9C, 0x9Dのいずれかである場合にのみログを取る
-	if frame.Data[0] == 0x9A || frame.Data[0] == 0x9C || frame.Data[0] == 0x9D {
+func wait_for_position_reached(ctx context.Context, pTx *socketcan.Transmitter, pRx *socketcan.Receiver, motor_id MotorID, target_position_in_rot shaft_position_in_rotation) error {
+
+	sendingData := can.Data{
+		0x9C, // Command byte: Read Motor Status 2 Command(current, speed, position)
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+	}
+
+	target_position_in_degree := target_position_in_rot.to_degree()
+
+	for {
+		// interfal duration
+		time.Sleep(100 * time.Millisecond)
+
+		// sending command
+		err := send_command(ctx, pTx, motor_id, sendingData, FLAG_SINGLE_MOTOR)
+		if err != nil {
+			log.Fatal("failed to send position controle command: ", err)
+		}
+
+		// receiving responce
+		if pRx.Receive() { // Should be updated so that no reply can be treated
+
+			respFrame := pRx.Frame()
+
+			if respFrame.ID != (0x240+uint32(motor_id)) || respFrame.Data[0] != sendingData[0] {
+				return fmt.Errorf("unexpected response received")
+			}
+
+			// モーターの現在位置を取得
+			current_position_in_degree := uint8_x2_to_int16(respFrame.Data[6], respFrame.Data[7])
+
+			if current_position_in_degree >= target_position_in_degree-ERROR_TOLERANCE_IN_DEGREE &&
+				current_position_in_degree <= target_position_in_degree+ERROR_TOLERANCE_IN_DEGREE {
+				log.Printf("Motor %d reached (target position: %.2f in rotation)", motor_id, target_position_in_rot)
+				return nil
+			}
+
+			// log.Printf("Motor %d current position: %d", motor_id, current_position_in_degree)
+
+			// leave logs
+			err = log_motion(respFrame)
+			if err != nil {
+				log.Println("Error when loging motion: ", err)
+			}
+		}
+
+	}
+}
+
+func uint8_x2_to_int16(byte_low, byte_high uint8) int16 {
+	return (int16(byte_low) | (int16(byte_high) << 8))
+}
+
+func send_motor_shutdown_command(ctx context.Context, pTx *socketcan.Transmitter, pRx *socketcan.Receiver, motor_id MotorID) error {
+	sendingData := can.Data{
+		0x80, // Command byte: To shutdown motor
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+		0x00, // NULL
+	}
+	err := send_command(ctx, pTx, motor_id, sendingData, FLAG_SINGLE_MOTOR)
+	if err != nil {
+		log.Fatal("failed to send position controle command: %v", err)
+	}
+
+	err = receive_and_check_reply(pRx, motor_id, sendingData)
+	if err != nil {
+		log.Fatal("failed to receive proper responce: %v", err)
+	}
+
+	return nil
+}
+
+func log_motion(frame can.Frame) error {
+
+	if frame.Data[0] == uint8(0x9C) {
 		// ログファイル名を生成
-		filename := fmt.Sprintf("can_log_%X_%X.log", frame.ID, frame.Data[0])
+
+		filename := fmt.Sprintf("log/can_log_%X_%X.log", frame.ID, frame.Data[0])
 
 		// ログファイルを開く（または作成する）
 		file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Fatal(err)
+			log.Println("Error when Opening File")
+			return err
 		}
 		defer file.Close()
 
@@ -130,230 +380,57 @@ func logFrame(frame can.Frame) {
 	} else {
 		fmt.Printf("ID: %X, Data: %X\n", frame.ID, frame.Data)
 	}
+	return nil
 }
 
-func ask_status_at_interval(ctx context.Context, pTx *socketcan.Transmitter, motor_ids []MotorID, s_data []can.Data, pWg *sync.WaitGroup) {
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
+func send_command(ctx context.Context, pTx *socketcan.Transmitter, motor_id MotorID, data can.Data, flag MotorTargetFlag) error {
+	frame := can.Frame{
+		ID:         uint32(motor_id) | uint32(flag),
+		Length:     8,
+		Data:       data,
+		IsRemote:   false,
+		IsExtended: false,
+	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("Shutting down...")
-			pWg.Done()
-			return
-		case <-ticker.C:
-			send_command_to_each_motors(ctx, pTx, motor_ids, s_data)
-			err := send_command_to_each_motors(ctx, pTx, motor_ids, s_data)
-			if err != nil {
-				log.Println("error when sending read_status command")
-				pWg.Done()
-				log.Fatal(err)
-			}
+	log.Print("Sending frame: ")
+	log.Println(frame)
 
+	err := pTx.TransmitFrame(ctx, frame)
+	if err != nil {
+		log.Println("Error when transmitting Frame (1)")
+	}
+	return err
+}
+
+func receive_and_check_reply(pRx *socketcan.Receiver, motor_id MotorID, sendingData can.Data) error {
+
+	if pRx.Receive() { // Should be updated so that no reply can be treated
+		respFrame := pRx.Frame()
+		log.Print("Replied frame: ")
+		log.Println(respFrame)
+		if respFrame.ID != (0x240+uint32(motor_id)) || respFrame.Data[0] != sendingData[0] {
+			return fmt.Errorf("unexpected response received")
 		}
 	}
+	return nil
 }
 
-type current_in_deci_A_int16 int16
-type angle_in_deci_degree_int16 int16
-type angle_in_deci_degree_int32 int32
-
-type shaft_angle_speed_in_deg_per_sec_int16 int16
-
-func (deci_A current_in_deci_A_int16) to_can_data_alley() [2]uint8 {
-	return (int16_to_uint8_alley(int16(deci_A)))
-	// return integer_to_alley_uint8_x_2(deci_A)
-}
-
-func (deci_deg angle_in_deci_degree_int16) to_can_data_alley() [2]uint8 {
-	return (int16_to_uint8_alley(int16(deci_deg)))
-	// return integer_to_alley_uint8_x_2(deci_deg)
-}
-
-func (deci_deg angle_in_deci_degree_int32) to_can_data_alley() [4]uint8 {
-	return (int32_to_uint8_alley(int32(deci_deg)))
-	// return integer_to_alley_uint8_x_4(deci_deg)
-}
-
-func (deg_per_sec shaft_angle_speed_in_deg_per_sec_int16) to_can_data_alley() [2]uint8 {
-	return (int16_to_uint8_alley(int16(deg_per_sec)))
-	// return integer_to_alley_uint8_x_2(deg_per_sec)
-}
-
-func int16_to_uint8_alley(int16_num int16) [2]uint8 {
-	return [2]uint8{
-		uint8(int16_num & 0xFF),
-		uint8(int16_num >> 8 & 0xFF),
-	}
-}
-
-func int32_to_uint8_alley(int32_num int32) [4]uint8 {
-	return [4]uint8{
-		uint8(int32_num & 0xFF),
-		uint8(int32_num >> 8 & 0xFF),
-		uint8(int32_num >> 16 & 0xFF),
-		uint8(int32_num >> 24 & 0xFF),
-	}
-}
-
-// func integer_to_uint8_alley(must_be_integer interface{}) [4]uint8 {
-// 	uint8_alley_for_can_data := [4]uint8{0, 0, 0, 0}
-// 	if integer, ok := must_be_integer.(int32); ok {
-// 		for i, _ := range uint8_alley_for_can_data {
-// 			uint8_alley_for_can_data[i] = uint8(integer >> (8 * i) & 0xFF)
-// 		}
-// 	} else if integer, ok := must_be_integer.(int16); ok {
-// 		uint8_alley_for_can_data[0] = uint8(integer & 0xFF)
-// 		uint8_alley_for_can_data[0] = uint8(integer >> 8 & 0xFF)
-// 	}
-// 	return uint8_alley_for_can_data
+// func (deci_A current_in_deci_A_int16) to_can_data_alley() [2]uint8 {
+// 	return (int16_to_uint8_alley(int16(deci_A)))
+// 	// return integer_to_alley_uint8_x_2(deci_A)
 // }
 
-func main() {
-	// 制御する全てのモーターの ID を Slice に格納
-	motor_ids := []MotorID{MOTOR_ID_1, MOTOR_ID_2}
+// func (deci_deg angle_in_deci_degree_int16) to_can_data_alley() [2]uint8 {
+// 	return (int16_to_uint8_alley(int16(deci_deg)))
+// 	// return integer_to_alley_uint8_x_2(deci_deg)
+// }
 
-	// Context を作成
-	ctx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
+// func (deci_deg angle_in_deci_degree_int32) to_can_data_alley() [4]uint8 {
+// 	return (int32_to_uint8_alley(int32(deci_deg)))
+// 	// return integer_to_alley_uint8_x_4(deci_deg)
+// }
 
-	// シグナルを受信するチャンネルを作成
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-
-	// WaitGroup を作成
-	var wg sync.WaitGroup
-	defer wg.Wait()
-
-	// CAN 通信のインターフェースを開く
-	pConn, err := socketcan.DialContext(ctx, "can", "can0")
-	if err != nil {
-		log.Println("Error when Dialialing with Context.")
-		log.Fatal(err)
-	}
-	defer pConn.Close()
-
-	// 一定のインターバルで CAN 通信を問い合わせる
-	pTx := socketcan.NewTransmitter(pConn)
-	defer pTx.Close()
-
-	// go-routine: データを受信し、ステータスに関する問い合わせのみ保存する。
-	wg.Add(1)
-	go recieve_reply_and_save_status_logs(ctx, pConn, &wg)
-
-	// go-routine: 一定のインターバルでステータスに対する問い合わせをする。
-	data_to_read_motor_status_2 := can.Data{0x9C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-	s_read_status_data_2 := []can.Data{
-		data_to_read_motor_status_2,
-		data_to_read_motor_status_2,
-	}
-	wg.Add(1)
-	go ask_status_at_interval(ctx, pTx, motor_ids, s_read_status_data_2, &wg)
-
-	// data_to_read_multi_turn_encoder_position_data := can.Data{0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-
-	// s_data_to_read_multi_turn_motor_position := []can.Data{
-	// 	data_to_read_multi_turn_encoder_position_data,
-	// 	data_to_read_multi_turn_encoder_position_data,
-	// }
-
-	// shaft_angle_speed := shaft_angle_speed_in_deg_per_sec_int16(180)
-	// a_speed := shaft_angle_speed.to_can_data_alley()
-
-	delta_deci_degree := angle_in_deci_degree_int32(0 * 100)
-	a_delt_c_deg := delta_deci_degree.to_can_data_alley()
-	log.Println(a_delt_c_deg)
-
-	// data_to_control_absolute_position_in_closed_loop_0 := can.Data{0xA4, 0x00, a_speed[0], a_speed[1], a_delt_c_deg[0], a_delt_c_deg[1], a_delt_c_deg[2], a_delt_c_deg[3]} // works
-
-	// s_data_to_control_absolute_position_in_closed_loop_0 := []can.Data{
-	// 	data_to_control_absolute_position_in_closed_loop_0,
-	// 	data_to_control_absolute_position_in_closed_loop_0,
-	// }
-
-	delta_deci_degree = angle_in_deci_degree_int32(-360 * 100)
-	a_delt_c_deg = delta_deci_degree.to_can_data_alley()
-	log.Println(a_delt_c_deg)
-	// data_to_control_absolute_position_in_closed_loop_360 := can.Data{0xA4, 0x00, a_speed[0], a_speed[1], a_delt_c_deg[0], a_delt_c_deg[1], a_delt_c_deg[2], a_delt_c_deg[3]} // works
-
-	deci_A_cw := current_in_deci_A_int16(-12)
-	a_deci_A_cw := deci_A_cw.to_can_data_alley()
-	// deci_A_ccw := current_in_deci_A_int16(-12)
-	// a_deci_A_ccw := deci_A_ccw.to_can_data_alley()
-
-	data_to_torque_closed_loop_control_cw := can.Data{0xA1, 0x00, 0x00, 0x00, a_deci_A_cw[0], a_deci_A_cw[1], 0x00, 0x00}
-	// data_to_torque_closed_loop_control_ccw := can.Data{0xA1, 0x00, 0x00, 0x00, a_deci_A_ccw[0], a_deci_A_ccw[1], 0x00, 0x00}
-
-	// s_data_to_position_cw_and_torque_cw_init := []can.Data{
-	// 	data_to_control_absolute_position_in_closed_loop_0,
-	// 	data_to_torque_closed_loop_control_cw,
-	// }
-
-	// s_data_to_position_cw_and_torque_cw := []can.Data{
-	// 	data_to_control_absolute_position_in_closed_loop_360,
-	// 	data_to_torque_closed_loop_control_cw,
-	// }
-
-	// s_data_to_torque_cw_and_position_cw := []can.Data{
-	// 	data_to_torque_closed_loop_control_cw,
-	// 	data_to_control_absolute_position_in_closed_loop_360,
-	// }
-
-	data_to_shutdown_motor := can.Data{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-
-	// s_data_to_torque_closed_loop_control := []can.Data{
-	// 	data_to_torque_closed_loop_control_cw,
-	// 	data_to_torque_closed_loop_control_ccw,
-	// }
-
-	s_data_to_shutdown_motor := []can.Data{
-		data_to_shutdown_motor,
-		data_to_shutdown_motor,
-	}
-
-	// s_data_to_control_absolute_position_in_closed_loop_360 := []can.Data{
-	// 	data_to_control_absolute_position_in_closed_loop_360,
-	// 	data_to_control_absolute_position_in_closed_loop_360,
-	// }
-
-	s_data_to_torque_control_for_code_test_only := []can.Data{
-		data_to_torque_closed_loop_control_cw,
-		data_to_torque_closed_loop_control_cw,
-	}
-
-	slice_of_sequance := [][]can.Data{
-		// s_data_to_shutdown_motor,
-		// s_data_to_read_multi_turn_motor_position,
-		// s_data_to_position_cw_and_torque_cw_init,
-		// s_data_to_position_cw_and_torque_cw,
-		// s_data_to_torque_cw_and_position_cw,
-		// s_data_to_control_absolute_position_in_closed_loop_0,
-		// s_data_to_control_absolute_position_in_closed_loop_360,
-		s_data_to_torque_control_for_code_test_only,
-		s_data_to_shutdown_motor,
-	}
-
-	// data := can.Data{0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-
-	for i, s_data := range slice_of_sequance {
-		err = send_command_to_each_motors(ctx, pTx, motor_ids, s_data)
-		if err != nil {
-			log.Println("error when sending command_to_each_motors...sequence:", i)
-			log.Fatal(err)
-		}
-		log.Println("Waiting for a second ...")
-		time.Sleep(10 * time.Second)
-	}
-
-	log.Println("wating 1 sec before exiting main() to confirm othe processes will finish properly")
-	time.Sleep(3 * time.Second)
-	log.Println("Exiting main()")
-
-	// fmt.Printf("Get message: %v\n", msg)
-}
+// func (deg_per_sec shaft_angle_speed_in_deg_per_sec_int16) to_can_data_alley() [2]uint8 {
+// 	return (int16_to_uint8_alley(int16(deg_per_sec)))
+// 	// return integer_to_alley_uint8_x_2(deg_per_sec)
+// }
